@@ -7,5 +7,4 @@ class Colors:
     Magenta = "\033[35m"
     Cyan    = "\033[36m"
     Black   = "\033[37m"
-    
     Reset   = "\033[0m"

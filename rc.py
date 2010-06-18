@@ -1,11 +1,13 @@
 #!/usr/bin/env python
 
 import sys
+import re
 import scriptine
 import scriptine.shell
 import scriptine.log
 import bdutil
 
+byte8_regex = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
 
 def parse_readelf_result(res, sec_name):
     """Scan readelf result for start and size of .text segment"""
@@ -26,17 +28,44 @@ def parse_readelf_result(res, sec_name):
     return (start, size)
     
     
-def parse_objdump_result(res):
+def parse_objdump_result(tmpfile):
     """Extract the opcode bytes from objdump's output stream"""
     
     stream = []
     
+    f = file(tmpfile)
+    
+    for line in f.readlines():
+        x = line.split()
+    
+        # Strip unneeded output:
+        # We need at least 6 bins here (address + 4 x 4 bytes + textdump).
+        # textdump may contain spaces, though, so we must not be sure about
+        # having exactly 6 bins.
+        if len(x) < 6:
+            continue
+        if len(x[0]) != 8:
+            continue
+        
+        # extract inner 4 columns
+        for data in x[1:5]:
+            m = byte8_regex.match(data)
+            if (m):
+                stream += m.groups()
+            else:
+                print "\"%s\"" % data, m
+    
     return stream
+
+
+def analyze_byte_stream(stream):
+    return ()
     
     
 def scan_command(filename):
     section_name = ".text" # we search for the text section as this is
                            # the one we'd like to scan through
+    tmpfile = "foo.tmp"
     
     # run readelf -S on the file to find the section info
     cmd = "readelf -S %s | grep %s" % (filename, section_name)
@@ -46,13 +75,25 @@ def scan_command(filename):
         return
 
     # use (start, size) to objdump text segment and extract opcode stream    
-    cmd = "objdump -s --start-address=0x%08x --stop-address=0x%08x %s" % (start, start+size, filename)
-    stream = parse_objdump_result(scriptine.shell.backtick(cmd))
+    cmd = "objdump -s --start-address=0x%08x --stop-address=0x%08x %s >%s" % (start, start+size, filename, tmpfile)
+    res = scriptine.shell.sh(cmd)
+    if res != 0:
+        scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red, bdutil.Colors.Reset)
+    
+    stream = parse_objdump_result(tmpfile)    
+    if len(stream) == 0:
+        scriptine.log.error("%sEmpty instruction stream?%s", bdutil.Colors.Red, bdutil.Colors.Reset)
+    
+    scriptine.log.info("Stream bytes: %d, real size %d", len(stream), size)    
     
     # analyze stream
+    analyze_byte_stream(stream)
     
     
 def prereq_check():
+    """Check if all required prerequisites for the shell-tool-based version
+       are available."""
+
     # prerequisites to check for
     prereqs = ["udcli",
                "objdump",
@@ -65,6 +106,7 @@ def prereq_check():
             return False
         
     return True
+
 
 if __name__ == "__main__":
     if (prereq_check()):
