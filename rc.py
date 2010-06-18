@@ -2,6 +2,7 @@
 
 import sys
 import re
+import os
 import scriptine
 import scriptine.shell
 import scriptine.log
@@ -85,6 +86,8 @@ def scan_command(filename):
         scriptine.log.error("%sEmpty instruction stream?%s", bdutil.Colors.Red, bdutil.Colors.Reset)
     
     scriptine.log.info("Stream bytes: %d, real size %d", len(stream), size)    
+    
+    os.remove(tmpfile)
     
     # analyze stream
     analyze_byte_stream(stream)
