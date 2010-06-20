@@ -1,0 +1,31 @@
+ROPScan v1.0
+============
+
+Motivation
+----------
+
+Return-oriented programming is a technique that relies on opcode sequences
+ending in a RET instruction and that are available from library or binary
+code within an application's address space. These sequences are therefore
+available in executable code pages and may be executed even if the underlying
+OS/HW supports non-executable page rights.
+
+For details on these attacks read:
+http://cseweb.ucsd.edu/~hovav/talks/blackhat08.html
+
+To initiate ROP, one needs a database of RET sequences. ROPScan supports
+deriving such a database by scanning executable sequences of a binary/library
+and checking the sequence's disassembly for being a valid and useful RET
+sequence.
+
+
+Usage
+-----
+rc.py scan <options> <file>
+
+Options:
+- - - - -
+
+--dump=[yes|no]    Dump found sequences. Default: yes
+--numbytes=<num>   Number of bytes a sequence may at most contain.
+                   Default: 20
