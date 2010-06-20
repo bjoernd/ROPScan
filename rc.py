@@ -1,4 +1,10 @@
 #!/usr/bin/env python
+"""
+This script uses objdump to extract code section(s) from a
+binary and then disassembles sequences ending with C3 to
+determine if this sequence would be a valid return sequence
+used for a return-oriented-programming-based attack.
+"""
 
 import sys
 import re
@@ -8,7 +14,7 @@ import scriptine.shell
 import scriptine.log
 import bdutil
 
-byte8_regex = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
+BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
 
 def parse_readelf_result(res, sec_name):
     """Scan readelf result for start and size of .text segment"""
@@ -34,63 +40,131 @@ def parse_objdump_result(tmpfile):
     
     stream = []
     
-    f = file(tmpfile)
+    tmpf = file(tmpfile)
     
-    for line in f.readlines():
-        x = line.split()
+    for line in tmpf.readlines():
+        bytes = line.split()
     
         # Strip unneeded output:
-        # We need at least 6 bins here (address + 4 x 4 bytes + textdump).
-        # textdump may contain spaces, though, so we must not be sure about
-        # having exactly 6 bins.
-        if len(x) < 6:
+        if len(bytes) == 0:
             continue
-        if len(x[0]) != 8:
+        if not BYTE8_RE.match(bytes[1]):
+            scriptine.log.debug("Dropping %s", bytes)
             continue
-        
+     
         # extract inner 4 columns
-        for data in x[1:5]:
-            m = byte8_regex.match(data)
-            if (m):
-                stream += m.groups()
+        for data in bytes[1:5]:
+            match = BYTE8_RE.match(data)
+            if match:
+                stream += match.groups()
             else:
-                print "\"%s\"" % data, m
+                print "\"%s\"" % data, match
     
     return stream
 
 
-def analyze_byte_stream(stream):
-    return ()
+def find_sequences_in_stream(stream, byte_offs=20,
+                             opcode="c3", opcode_str="ret"):
+    """
+    Run through byte stream, find occurences of opcode and check if the
+    corresponding disassembly for the last [1, byte_offs] bytes ends with
+    a ret instruction.
+    
+    Returns: List of (offset, length) tuples representing the valid sequences.
+    """
+    
+    tmpfile = "foo.tmp"
+    ret = []  
+    
+    # we need at least one more byte than the C3 instruction,
+    # so less than 2 is bad
+    if (byte_offs < 2):
+        scriptine.log.error("Byte offset (%d) too small.", byte_offs)
+    
+    scriptine.log.log("Scanning byte stream for %s instruction sequences",
+                      opcode)
+    
+    # find first occurence
+    idx = stream.index(opcode)
+    while idx > 0:
+        scriptine.log.log("Position in stream: %.2f%%",
+                          100.0 * float(float(idx+1) / len(stream)))
+        
+        # if occurence is less than byte_offs bytes into the stream,
+        # adapt the limit
+        if idx > byte_offs:
+            limit = byte_offs
+        else:
+            limit = idx+1
+            
+        # validity check sequences by disassembling
+        for i in range(1, limit):
+            # byte string to send to disassembler
+            data = "".join([c+' ' for c in stream[idx-i: idx+1]])
+            
+            cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
+            scriptine.shell.backtick(cmd)
+            
+            # sequence is valid, if tmpfile contains opcode_str in the last line
+            tmpf = file(tmpfile)
+            lines = tmpf.readlines()
+            retline = lines[-1].strip()
+            if retline == opcode_str:
+                ret += [(idx, i)]
+        
+        try:
+            idx = stream.index(opcode, idx+1)
+        except:
+            idx = -1
+
+    os.remove(tmpfile)
+    
+    return ret
     
     
 def scan_command(filename):
+    """
+    Shell command: scan binary for C3 instruction sequences
+    """
     section_name = ".text" # we search for the text section as this is
                            # the one we'd like to scan through
     tmpfile = "foo.tmp"
     
     # run readelf -S on the file to find the section info
     cmd = "readelf -S %s | grep %s" % (filename, section_name)
-    (start, size) = parse_readelf_result(scriptine.shell.backtick(cmd), section_name)
+    (start, size) = parse_readelf_result(scriptine.shell.backtick(cmd),
+                                         section_name)
     if (start == -1 and size == -1):
-        scriptine.log.error("%sCannot determine start/size of .text section%s", bdutil.Colors.Red, bdutil.Colors.Reset)
+        scriptine.log.error("%sCannot determine start/size of .text section%s",
+                            bdutil.Colors.Red, bdutil.Colors.Reset)
         return
 
     # use (start, size) to objdump text segment and extract opcode stream    
-    cmd = "objdump -s --start-address=0x%08x --stop-address=0x%08x %s >%s" % (start, start+size, filename, tmpfile)
+    cmd = "objdump -s "
+    cmd += "--start-address=0x%08x --stop-address=0x%08x " % (start, start+size)
+    cmd += "%s >%s" % (filename, tmpfile)
+    
     res = scriptine.shell.sh(cmd)
     if res != 0:
-        scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red, bdutil.Colors.Reset)
+        scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red,
+                            bdutil.Colors.Reset)
     
     stream = parse_objdump_result(tmpfile)    
     if len(stream) == 0:
-        scriptine.log.error("%sEmpty instruction stream?%s", bdutil.Colors.Red, bdutil.Colors.Reset)
+        scriptine.log.error("%sEmpty instruction stream?%s",
+                            bdutil.Colors.Red, bdutil.Colors.Reset)
     
-    scriptine.log.info("Stream bytes: %d, real size %d", len(stream), size)    
+    scriptine.log.info("Stream bytes: %d, real size %d", len(stream), size)
+    if len(stream) != size:
+        print stream
+        sys.exit(1)
     
     os.remove(tmpfile)
     
     # analyze stream
-    analyze_byte_stream(stream)
+    locations = find_sequences_in_stream(stream, opcode="c3",
+                                         opcode_str="ret", byte_offs=10)
+    scriptine.log.log("Found %d sequences.", len(locations))
     
     
 def prereq_check():
@@ -102,10 +176,11 @@ def prereq_check():
                "objdump",
                "readelf"]
     
-    for p in prereqs:
-        x = scriptine.shell.backtick("which %s" % p)
-        if x == "":
-            scriptine.log.warn("%s%s%s not found", bdutil.Colors.Yellow, p, bdutil.Colors.Reset)
+    for pre in prereqs:
+        res = scriptine.shell.backtick("which %s" % pre)
+        if res == "":
+            scriptine.log.warn("%s%s%s not found", bdutil.Colors.Yellow,
+                               pre, bdutil.Colors.Reset)
             return False
         
     return True
@@ -115,4 +190,5 @@ if __name__ == "__main__":
     if (prereq_check()):
         scriptine.run()
     else:
-        scriptine.log.error("Missing shell tool(s). No native implementation (yet).")
+        scriptine.log.error(
+            "Missing shell tool(s). No native implementation (yet).")
