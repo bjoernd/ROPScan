@@ -74,9 +74,6 @@ def find_sequences_in_stream(stream, byte_offs=20,
     Returns: List of (offset, length) tuples representing the valid sequences.
     """
     
-    # TODO: make sure that the terminating RET of a sequence is the
-    #       _only_ one in the sequence
-    
     tmpfile = "foo.tmp"
     ret = []  
     
@@ -108,13 +105,23 @@ def find_sequences_in_stream(stream, byte_offs=20,
             data = "".join([c+' ' for c in stream[idx-i: idx+1]])
             
             cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
-            scriptine.shell.backtick(cmd)
+            res = scriptine.shell.sh(cmd)
+            if res != 0:
+                print cmd, res
             
             # sequence is valid, if tmpfile contains opcode_str in the last line
             tmpf = file(tmpfile)
-            lines = tmpf.readlines()
-            retline = lines[-1].strip()
-            if retline == opcode_str:
+            lines = [l.strip() for l in tmpf.readlines()]
+            
+            # find first occurrence of RET in disassembly
+            try:
+                finishing_idx = lines.index(opcode_str)
+            except: # might even have NO ret at all
+                finishing_idx = -1
+
+            # -> this sequence is a valid new sequence, iff RET only occurs as
+            #    the final instruction            
+            if finishing_idx == len(lines)-1:
                 ret += [(idx, i)]
         
         try:
