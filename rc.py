@@ -16,12 +16,13 @@ import bdutil
 
 BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
 
-def parse_readelf_result(res, sec_name):
+def parse_readelf_result(tmpfile, sec_name):
     """Scan readelf result for start and size of .text segment"""
     start = -1
     size  = -1
     
-    elements = res.split()
+    res = file(tmpfile) .readlines()
+    elements = res[0].split()
     
     # Depending on the position of .text in the section list, splitting
     # the result line will give a varying count of elements.
@@ -58,7 +59,7 @@ def parse_objdump_result(tmpfile):
             if match:
                 stream += match.groups()
             else:
-                print "\"%s\"" % data, match
+                pass
     
     return stream
 
@@ -73,6 +74,9 @@ def find_sequences_in_stream(stream, byte_offs=20,
     Returns: List of (offset, length) tuples representing the valid sequences.
     """
     
+    # TODO: make sure that the terminating RET of a sequence is the
+    #       _only_ one in the sequence
+    
     tmpfile = "foo.tmp"
     ret = []  
     
@@ -80,6 +84,7 @@ def find_sequences_in_stream(stream, byte_offs=20,
     # so less than 2 is bad
     if (byte_offs < 2):
         scriptine.log.error("Byte offset (%d) too small.", byte_offs)
+        return ret
     
     scriptine.log.log("Scanning byte stream for %s instruction sequences",
                       opcode)
@@ -122,18 +127,27 @@ def find_sequences_in_stream(stream, byte_offs=20,
     return ret
     
     
-def scan_command(filename):
+def scan_command(filename, dump="yes", numbytes=20):
     """
     Shell command: scan binary for C3 instruction sequences
+    
+    Options:
+       filename  -- binary to scan
+       dump      -- dump sequences (yes/no), default: yes
     """
     section_name = ".text" # we search for the text section as this is
                            # the one we'd like to scan through
     tmpfile = "foo.tmp"
     
     # run readelf -S on the file to find the section info
-    cmd = "readelf -S %s | grep %s" % (filename, section_name)
-    (start, size) = parse_readelf_result(scriptine.shell.backtick(cmd),
-                                         section_name)
+    cmd = "readelf -S %s | grep %s >%s" % (filename, section_name, tmpfile)
+    res = scriptine.shell.sh(cmd)
+    if res != 0:
+        scriptine.log.error("%sreadelf error%s", bdutil.Colors.Red,
+                            bdutil.Colors.Reset)
+        return
+    
+    (start, size) = parse_readelf_result(tmpfile, section_name)
     if (start == -1 and size == -1):
         scriptine.log.error("%sCannot determine start/size of .text section%s",
                             bdutil.Colors.Red, bdutil.Colors.Reset)
@@ -163,8 +177,19 @@ def scan_command(filename):
     
     # analyze stream
     locations = find_sequences_in_stream(stream, opcode="c3",
-                                         opcode_str="ret", byte_offs=10)
-    scriptine.log.log("Found %d sequences.", len(locations))
+                                         opcode_str="ret", byte_offs=numbytes)
+    scriptine.log.log("Found: %d sequences.", len(locations))
+    
+    # get unique locations by creating a set of offsets 
+    c3_locs = set([offs for (offs,length) in locations])
+    scriptine.log.log("       %d unique C3 locations", len(c3_locs))
+    
+    if dump == "yes":
+        for (c3_offset, length) in locations:
+            begin = start + c3_offset - length
+            print "0x%08x + %3d:  %s" % (begin, length, bdutil.Colors.Cyan),
+            print " ".join(stream[c3_offset - length:c3_offset+1]),
+            print "%s" % (bdutil.Colors.Reset)
     
     
 def prereq_check():
