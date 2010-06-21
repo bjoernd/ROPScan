@@ -20,6 +20,64 @@ import bdutil
 
 BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
 
+
+class CommandBuilder():
+    """
+    Class for building shell command lines used by the program
+    """
+    def __init__(self):
+        self.prerequisites = [ "udcli", "objdump", "readelf" ]
+
+
+    def prereq_check(self):
+        """Check if all required prerequisites for the shell-tool-based version
+           are available."""
+
+        # prerequisites to check for
+        prereqs = ["udcli",
+                   "objdump",
+                   "readelf"]
+
+        for pre in prereqs:
+            res = scriptine.shell.backtick("which %s" % pre)
+            if res == "":
+                scriptine.log.warn("%s%s%s not found", bdutil.Colors.Yellow,
+                                   pre, bdutil.Colors.Reset)
+                return False
+
+        return True
+
+
+    def build_udcli_cmd(self, data, tmpfile):
+        """
+        Generate call to UDCLI disassembler
+        """
+        cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
+        return cmd
+
+
+    def build_objdump_cmd(self, start_addr, segment_size, binaryfile, tmpfile):
+        """
+        Generate call to objdump extracting bytes between start and start+size
+        """
+        cmd = "objdump -s "
+        cmd += "--start-address=0x%08x " % start_addr
+        cmd += "--stop-address=0x%08x " % (start_addr+segment_size)
+        cmd += "%s >%s" % (binaryfile, tmpfile)
+        return cmd
+
+
+    def build_readelf_cmd(self, binaryfile, section, tmpfile):
+        """
+        Generate call to readelf extracting segment list
+        """
+        cmd = "readelf -S %s | " % binaryfile
+        cmd += "grep %s > %s" % (section, tmpfile)
+        return cmd
+
+
+
+
 def parse_readelf_result(tmpfile, sec_name):
     """Scan readelf result for start and size of .text segment"""
     start = -1
@@ -106,9 +164,9 @@ def find_sequences_in_stream(stream, byte_offs=20,
         # validity check sequences by disassembling
         for i in range(1, limit):
             # byte string to send to disassembler
-            data = "".join([c+' ' for c in stream[idx-i: idx+1]])
+            byte_data = "".join([c+' ' for c in stream[idx-i: idx+1]])
 
-            cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
+            cmd = CommandBuilder().build_udcli_cmd(byte_data, tmpfile)
             res = scriptine.shell.sh(cmd)
             if res != 0:
                 print cmd, res
@@ -173,20 +231,6 @@ def dump_locations_with_offset(bytestream, locations, start_offset):
         print "%s" % (bdutil.Colors.Reset)
 
 
-def build_objdump_cmd(start_addr, segment_size, binaryfile, tmpfile):
-    cmd = "objdump -s "
-    cmd += "--start-address=0x%08x " % start_addr
-    cmd += "--stop-address=0x%08x " % (start_addr+segment_size)
-    cmd += "%s >%s" % (binaryfile, tmpfile)
-    return cmd
-
-
-def build_readelf_cmd(binaryfile, section, tmpfile):
-    cmd = "readelf -S %s | " % binaryfile
-    cmd += "grep %s > %s" % (section, tmpfile)
-    return cmd
-
-
 def scan_command(filename, dump="yes", numbytes=20):
     """
     Shell command: scan binary for C3 instruction sequences
@@ -200,7 +244,7 @@ def scan_command(filename, dump="yes", numbytes=20):
     tmpfile = "foo.tmp"
 
     # run readelf -S on the file to find the section info
-    cmd = build_readelf_cmd(filename, section_name, tmpfile)
+    cmd = CommandBuilder().build_readelf_cmd(filename, section_name, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sreadelf error%s", bdutil.Colors.Red,
@@ -214,7 +258,7 @@ def scan_command(filename, dump="yes", numbytes=20):
         return
 
     # use (start, size) to objdump text segment and extract opcode stream
-    cmd = build_objdump_cmd(start, size, filename, tmpfile)
+    cmd = CommandBuilder().build_objdump_cmd(start, size, filename, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red,
@@ -249,27 +293,9 @@ def scan_command(filename, dump="yes", numbytes=20):
         dump_locations_with_offset(stream, locations, start)
 
 
-def prereq_check():
-    """Check if all required prerequisites for the shell-tool-based version
-       are available."""
-
-    # prerequisites to check for
-    prereqs = ["udcli",
-               "objdump",
-               "readelf"]
-
-    for pre in prereqs:
-        res = scriptine.shell.backtick("which %s" % pre)
-        if res == "":
-            scriptine.log.warn("%s%s%s not found", bdutil.Colors.Yellow,
-                               pre, bdutil.Colors.Reset)
-            return False
-
-    return True
-
 
 if __name__ == "__main__":
-    if (prereq_check()):
+    if (CommandBuilder().prereq_check()):
         scriptine.run()
     else:
         scriptine.log.error(
