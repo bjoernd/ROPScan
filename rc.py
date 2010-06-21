@@ -10,9 +10,12 @@ used for a return-oriented-programming-based attack.
 import sys
 import re
 import os
+import hashlib
+
 import scriptine
 import scriptine.shell
 import scriptine.log
+
 import bdutil
 
 BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
@@ -134,8 +137,54 @@ def find_sequences_in_stream(stream, byte_offs=20,
         print("\033[%dD\033[A" % len(streampos_str))
 
     os.remove(tmpfile)
+    print ""
 
     return ret
+
+
+def unique_sequences(bytestream, locations):
+    """
+    Given a byte stream and a set of locations, determine how
+    many unique sequences are within the stream.
+    """
+    uniq_seqs = set()
+    for (off, length) in locations:
+        seq = "".join(bytestream[off-length:off+1])
+        hsh = hashlib.md5(seq)
+        uniq_seqs.add(hsh.hexdigest())
+
+    return uniq_seqs
+
+
+def dump_byte_stream(bytestream, offset, length):
+    """
+    Dump byte stream at given (offset, length) pairs.
+
+    Note: length in (offset, length) means _before_ offset
+    """
+    print " ".join(bytestream[offset:offset+length+1]),
+
+
+def dump_locations_with_offset(bytestream, locations, start_offset):
+    for (c3_offset, length) in locations:
+        begin = start_offset + c3_offset - length
+        print "0x%08x + %3d:  %s" % (begin, length, bdutil.Colors.Cyan),
+        dump_byte_stream(bytestream, c3_offset-length, length)
+        print "%s" % (bdutil.Colors.Reset)
+
+
+def build_objdump_cmd(start_addr, segment_size, binaryfile, tmpfile):
+    cmd = "objdump -s "
+    cmd += "--start-address=0x%08x " % start_addr
+    cmd += "--stop-address=0x%08x " % (start_addr+segment_size)
+    cmd += "%s >%s" % (binaryfile, tmpfile)
+    return cmd
+
+
+def build_readelf_cmd(binaryfile, section, tmpfile):
+    cmd = "readelf -S %s | " % binaryfile
+    cmd += "grep %s > %s" % (section, tmpfile)
+    return cmd
 
 
 def scan_command(filename, dump="yes", numbytes=20):
@@ -151,7 +200,7 @@ def scan_command(filename, dump="yes", numbytes=20):
     tmpfile = "foo.tmp"
 
     # run readelf -S on the file to find the section info
-    cmd = "readelf -S %s | grep %s >%s" % (filename, section_name, tmpfile)
+    cmd = build_readelf_cmd(filename, section_name, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sreadelf error%s", bdutil.Colors.Red,
@@ -165,10 +214,7 @@ def scan_command(filename, dump="yes", numbytes=20):
         return
 
     # use (start, size) to objdump text segment and extract opcode stream
-    cmd = "objdump -s "
-    cmd += "--start-address=0x%08x --stop-address=0x%08x " % (start, start+size)
-    cmd += "%s >%s" % (filename, tmpfile)
-
+    cmd = build_objdump_cmd(start, size, filename, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red,
@@ -191,16 +237,16 @@ def scan_command(filename, dump="yes", numbytes=20):
                                          opcode_str="ret", byte_offs=numbytes)
     scriptine.log.log("Found: %d sequences.", len(locations))
 
+    # check for uniqueness of sequences
+    uniq_seqs = unique_sequences(stream, locations)
+    scriptine.log.log("       %d unique sequences", len(uniq_seqs))
+
     # get unique locations by creating a set of offsets
     c3_locs = set([offs for (offs,length) in locations])
     scriptine.log.log("       %d unique C3 locations", len(c3_locs))
 
     if dump == "yes":
-        for (c3_offset, length) in locations:
-            begin = start + c3_offset - length
-            print "0x%08x + %3d:  %s" % (begin, length, bdutil.Colors.Cyan),
-            print " ".join(stream[c3_offset - length:c3_offset+1]),
-            print "%s" % (bdutil.Colors.Reset)
+        dump_locations_with_offset(stream, locations, start)
 
 
 def prereq_check():
