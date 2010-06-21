@@ -9,15 +9,13 @@ used for a return-oriented-programming-based attack.
 
 import sys
 import os
-import hashlib
 
 import scriptine
 import scriptine.shell
 import scriptine.log
 
-from bdutil import abstract, Colors
+from bdutil import Colors
 from cmd import ReadelfCmd, ObjdumpCmd
-from data import Section
 from opcodestream import OpcodeStream
 
 
@@ -49,7 +47,10 @@ class CommandChecker():
 
 
 def scan_section(section, filename, dump, numbytes):
-    tmpfile="blub.tmp"
+    """
+    Scan a single section
+    """
+    tmpfile = "blub.tmp"
     section.dump()
     # use (start, size) to objdump text segment and extract opcode stream
     objdump = ObjdumpCmd()
@@ -64,9 +65,11 @@ def scan_section(section, filename, dump, numbytes):
         scriptine.log.error("%sEmpty instruction stream?%s",
                             Colors.Red, Colors.Reset)
 
-    scriptine.log.info("Stream bytes: %d, real size %d", len(stream), section.size)
+    scriptine.log.info("Stream bytes: %d, real size %d", len(stream),
+                       section.size)
     # we must have extracted all bytes
     if len(stream) != section.size:
+        print "Size mismatch: %d <-> %d" % (len(stream), section.size)
         print stream
         sys.exit(1)
 
@@ -74,7 +77,8 @@ def scan_section(section, filename, dump, numbytes):
 
     ostream = OpcodeStream(stream)
     # analyze stream
-    locations = ostream.find_sequences(opcode="c3", opcode_str="ret", byte_offs=numbytes)
+    locations = ostream.find_sequences(opcode="c3", opcode_str="ret",
+                                       byte_offs=numbytes)
     scriptine.log.log("Found: %d sequences.", len(locations))
 
     # check for uniqueness of sequences
@@ -82,11 +86,13 @@ def scan_section(section, filename, dump, numbytes):
     scriptine.log.log("       %d unique sequences", len(uniq_seqs))
 
     # get unique locations by creating a set of offsets
-    c3_locs = set([offs for (offs,length) in locations])
+    c3_locs = set([offs for (offs, length) in locations])
     scriptine.log.log("       %d unique C3 locations", len(c3_locs))
 
     if dump == "yes":
         ostream.dump_locations_with_offset(locations, section.start)
+
+    return (len(locations), len(uniq_seqs), len(c3_locs))
 
 
 def scan_command(filename, dump="yes", numbytes=20):
@@ -115,9 +121,21 @@ def scan_command(filename, dump="yes", numbytes=20):
                             Colors.Red, Colors.Reset)
         return
 
-    for sec in the_list:
-        scan_section(sec, filename, dump, numbytes)
+    global_sequences = 0
+    global_uniq_seqs = 0
+    global_uniq_locs = 0
 
+    for sec in the_list:
+        (seq, uniq_seq, uniq_loc) = scan_section(sec, filename, dump, numbytes)
+        global_sequences = global_sequences + seq
+        global_uniq_seqs = global_uniq_seqs + uniq_seq
+        global_uniq_locs = global_uniq_locs + uniq_loc
+
+    scriptine.log.log("%s============= FINISHED =============%s",
+                      Colors.Cyan, Colors.Reset)
+    scriptine.log.log("Overall sequences found: %d", global_sequences)
+    scriptine.log.log("       Unique sequences: %d", global_uniq_seqs)
+    scriptine.log.log("       Unique locations: %d", global_uniq_locs)
 
 if __name__ == "__main__":
     if (CommandChecker().prereq_check()):

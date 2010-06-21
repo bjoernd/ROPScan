@@ -1,4 +1,10 @@
+# vim: set ts=4 et
+"""
+Commands used by ROPCheck
+"""
+
 import re
+from bdutil import abstract
 from data import Section
 import scriptine
 
@@ -6,13 +12,24 @@ class Cmd:
     """
     Abstract command class
     """
-    def __init__(self):     abstract()
-    def cmd_str(self):      abstract()
-    def parse_result(self): abstract()
+    def __init__(self):
+        pass
+
+    def cmd_str(self):
+        """abstract: return cmd string to execute"""
+        abstract()
+
+    def parse_result(self):
+        """abstract: parse cmd result"""
+        abstract()
 
 
 class ReadelfCmd(Cmd):
+    """
+    Command class representing a readelf call
+    """
     def __init__(self):
+        Cmd.__init__(self)
         # readline formats sections like this:
         #   [Nr] Name Type Addr Off Size ES Flg Lk Inf Al
         self.section_re = re.compile("(\s*)"            # leading spaces
@@ -60,7 +77,6 @@ class ReadelfCmd(Cmd):
                 # alphanumeric characters
                 if self.nondigit_re.match(rest[0]) and \
                    'X' in rest[0]:
-                    flags = rest[0]
                     retlist += [Section(name, start, size)]
 
         return retlist
@@ -71,8 +87,8 @@ class ObjdumpCmd(Cmd):
     Objdump command class
     """
     def __init__(self):
-        self.BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
-
+        Cmd.__init__(self)
+        self.byte4_re = re.compile("([a-f0-9]{2})" + "([a-f0-9][a-f0-9])?"*3)
 
     def cmd_str(self, start_addr, segment_size, binaryfile, tmpfile):
         """
@@ -92,21 +108,24 @@ class ObjdumpCmd(Cmd):
         tmpf = file(tmpfile)
 
         for line in tmpf.readlines():
-            bytes = line.split()
+            _bytes = line.split()
 
             # Strip unneeded output:
-            if len(bytes) == 0:
+            if len(_bytes) == 0:
                 continue
-            if not self.BYTE8_RE.match(bytes[1]):
-                scriptine.log.debug("Dropping %s", bytes)
+            if self.byte4_re.match(_bytes[1]) is None:
+                scriptine.log.info("Dropping %s", _bytes)
                 continue
 
             # extract inner 4 columns
-            for data in bytes[1:5]:
-                match = self.BYTE8_RE.match(data)
+            for data in _bytes[1:5]:
+                match = self.byte4_re.match(data)
                 if match:
-                    stream += match.groups()
-                else:
+                    for byte in match.groups():
+                        if byte != "" and byte is not None:
+                            stream += [byte]
+                else: 
+                    print "No match: ", data
                     pass
 
         return stream
@@ -117,7 +136,7 @@ class UDCLICmd(Cmd):
     Command for the UDCLI disassembler
     """
     def __init__(self):
-        pass
+        Cmd.__init__(self)
 
     def cmd_str(self, data, tmpfile):
         """
@@ -127,6 +146,9 @@ class UDCLICmd(Cmd):
         return cmd
 
     def parse_result(self):
+        """
+        We don't do anything with the UDCLI result on stdout so far
+        """
         pass
 
 

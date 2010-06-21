@@ -1,9 +1,17 @@
+"""
+OpcodeStream class used by ROPCheck
+"""
 import scriptine
 import os
 import hashlib
 from cmd import UDCLICmd
+from bdutil import Colors
 
 class OpcodeStream():
+    """
+    An opcode stream represents a stream of bytes that are scanned for
+    valid RET sequences
+    """
     def __init__(self, bytestream):
         self.stream = bytestream
 
@@ -33,7 +41,8 @@ class OpcodeStream():
         try:
             idx = self.stream.index(opcode)
             while idx > 0:
-                streampos_str = "Position in stream: %02.2f%%" % (100.0 * float(idx+1) / len(self.stream))
+                streampos_str = "Position in stream: %02.2f%%" % \
+                        (100.0 * float(idx+1) / len(self.stream))
                 print streampos_str,
 
                 # if occurence is less than byte_offs bytes into the stream,
@@ -46,26 +55,28 @@ class OpcodeStream():
                 # validity check sequences by disassembling
                 for i in range(1, limit):
                     # byte string to send to disassembler
-                    byte_data = "".join([c+' ' for c in self.stream[idx-i: idx+1]])
+                    byte_data = \
+                        "".join([c+' ' for c in self.stream[idx-i: idx+1]])
 
                     udcli = UDCLICmd()
                     cmd = udcli.cmd_str(byte_data, tmpfile)
                     res = scriptine.shell.sh(cmd)
                     if res != 0:
-                        print cmd, res
+                        print "ERROR: ", cmd, res
 
-                    # sequence is valid, if tmpfile contains opcode_str in the last line
+                    # sequence is valid, if tmpfile contains opcode_str 
+                    # in the last line
                     tmpf = file(tmpfile)
                     lines = [l.strip() for l in tmpf.readlines()]
 
                     # find first occurrence of RET in disassembly
                     try:
                         finishing_idx = lines.index(opcode_str)
-                    except: # might even have NO ret at all
+                    except ValueError: # might even have NO ret at all
                         finishing_idx = -1
 
-                    # -> this sequence is a valid new sequence, iff RET only occurs as
-                    #    the final instruction
+                    # -> this sequence is a valid new sequence, iff RET
+                    # only occurs as the final instruction
                     if finishing_idx == len(lines)-1:
                         retlist += [(idx, i)]
 
@@ -111,6 +122,9 @@ class OpcodeStream():
 
 
     def dump_locations_with_offset(self, locations, start_offset):
+        """
+        Dump all sequences with the correct address offsets
+        """
         for (c3_offset, length) in locations:
             begin = start_offset + c3_offset - length
             print "0x%08x + %3d:  %s" % (begin, length, Colors.Cyan),
