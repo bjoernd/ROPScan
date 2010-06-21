@@ -16,12 +16,10 @@ import scriptine
 import scriptine.shell
 import scriptine.log
 
-import bdutil
-
-BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
+from bdutil import abstract, Colors
 
 
-class CommandBuilder():
+class CommandChecker():
     """
     Class for building shell command lines used by the program
     """
@@ -48,15 +46,57 @@ class CommandBuilder():
         return True
 
 
-    def build_udcli_cmd(self, data, tmpfile):
+class Cmd:
+    """
+    Abstract command class
+    """
+    def __init__(self):     abstract()
+    def cmd_str(self):      abstract()
+    def parse_result(self): abstract()
+
+
+class ReadelfCmd(Cmd):
+    def __init__(self):
+        pass
+
+    def cmd_str(self, binaryfile, section, tmpfile):
         """
-        Generate call to UDCLI disassembler
+        Generate call to readelf extracting segment list
         """
-        cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
+        cmd = "readelf -S %s | " % binaryfile
+        cmd += "grep %s > %s" % (section, tmpfile)
         return cmd
 
 
-    def build_objdump_cmd(self, start_addr, segment_size, binaryfile, tmpfile):
+    def parse_result(self, tmpfile, sec_name):
+        """Scan readelf result for start and size of .text segment"""
+        start = -1
+        size  = -1
+
+        res = file(tmpfile) .readlines()
+        elements = res[0].split()
+
+        # Depending on the position of .text in the section list, splitting
+        # the result line will give a varying count of elements.
+        # Start and size are at fixed indices from the position of .text, though
+        base_index = elements.index(sec_name)
+
+        start = int(elements[base_index + 2], 16)
+        size  = int(elements[base_index + 4], 16)
+
+        scriptine.log.info("Start %08x Size %08x", start, size)
+        return (start, size)
+
+
+class ObjdumpCmd(Cmd):
+    """
+    Objdump command class
+    """
+    def __init__(self):
+        self.BYTE8_RE = re.compile("([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})([a-f0-9]{2})")
+
+
+    def cmd_str(self, start_addr, segment_size, binaryfile, tmpfile):
         """
         Generate call to objdump extracting bytes between start and start+size
         """
@@ -67,63 +107,49 @@ class CommandBuilder():
         return cmd
 
 
-    def build_readelf_cmd(self, binaryfile, section, tmpfile):
+    def parse_result(self, tmpfile):
+        """Extract the opcode bytes from objdump's output stream"""
+        stream = []
+
+        tmpf = file(tmpfile)
+
+        for line in tmpf.readlines():
+            bytes = line.split()
+
+            # Strip unneeded output:
+            if len(bytes) == 0:
+                continue
+            if not self.BYTE8_RE.match(bytes[1]):
+                scriptine.log.debug("Dropping %s", bytes)
+                continue
+
+            # extract inner 4 columns
+            for data in bytes[1:5]:
+                match = self.BYTE8_RE.match(data)
+                if match:
+                    stream += match.groups()
+                else:
+                    pass
+
+        return stream
+
+
+class UDCLICmd(Cmd):
+    """
+    Command for the UDCLI disassembler
+    """
+    def __init__(self):
+        pass
+
+    def cmd_str(self, data, tmpfile):
         """
-        Generate call to readelf extracting segment list
+        Generate call to UDCLI disassembler
         """
-        cmd = "readelf -S %s | " % binaryfile
-        cmd += "grep %s > %s" % (section, tmpfile)
+        cmd = "echo %s |  udcli -x -32 -noff -nohex >%s" % (data, tmpfile)
         return cmd
 
-
-
-
-def parse_readelf_result(tmpfile, sec_name):
-    """Scan readelf result for start and size of .text segment"""
-    start = -1
-    size  = -1
-
-    res = file(tmpfile) .readlines()
-    elements = res[0].split()
-
-    # Depending on the position of .text in the section list, splitting
-    # the result line will give a varying count of elements.
-    # Start and size are at fixed indices from the position of .text, though
-    base_index = elements.index(sec_name)
-
-    start = int(elements[base_index + 2], 16)
-    size  = int(elements[base_index + 4], 16)
-
-    scriptine.log.info("Start %08x Size %08x", start, size)
-    return (start, size)
-
-
-def parse_objdump_result(tmpfile):
-    """Extract the opcode bytes from objdump's output stream"""
-
-    stream = []
-
-    tmpf = file(tmpfile)
-
-    for line in tmpf.readlines():
-        bytes = line.split()
-
-        # Strip unneeded output:
-        if len(bytes) == 0:
-            continue
-        if not BYTE8_RE.match(bytes[1]):
-            scriptine.log.debug("Dropping %s", bytes)
-            continue
-
-        # extract inner 4 columns
-        for data in bytes[1:5]:
-            match = BYTE8_RE.match(data)
-            if match:
-                stream += match.groups()
-            else:
-                pass
-
-    return stream
+    def parse_result(self):
+        pass
 
 
 def find_sequences_in_stream(stream, byte_offs=20,
@@ -166,7 +192,8 @@ def find_sequences_in_stream(stream, byte_offs=20,
             # byte string to send to disassembler
             byte_data = "".join([c+' ' for c in stream[idx-i: idx+1]])
 
-            cmd = CommandBuilder().build_udcli_cmd(byte_data, tmpfile)
+            udcli = UDCLICmd()
+            cmd = udcli.cmd_str(byte_data, tmpfile)
             res = scriptine.shell.sh(cmd)
             if res != 0:
                 print cmd, res
@@ -244,27 +271,29 @@ def scan_command(filename, dump="yes", numbytes=20):
     tmpfile = "foo.tmp"
 
     # run readelf -S on the file to find the section info
-    cmd = CommandBuilder().build_readelf_cmd(filename, section_name, tmpfile)
+    readelf = ReadelfCmd()
+    cmd = readelf.cmd_str(filename, section_name, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sreadelf error%s", bdutil.Colors.Red,
                             bdutil.Colors.Reset)
         return
 
-    (start, size) = parse_readelf_result(tmpfile, section_name)
+    (start, size) = readelf.parse_result(tmpfile, section_name)
     if (start == -1 and size == -1):
         scriptine.log.error("%sCannot determine start/size of .text section%s",
                             bdutil.Colors.Red, bdutil.Colors.Reset)
         return
 
     # use (start, size) to objdump text segment and extract opcode stream
-    cmd = CommandBuilder().build_objdump_cmd(start, size, filename, tmpfile)
+    objdump = ObjdumpCmd()
+    cmd = objdump.cmd_str(start, size, filename, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
         scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red,
                             bdutil.Colors.Reset)
 
-    stream = parse_objdump_result(tmpfile)
+    stream = objdump.parse_result(tmpfile)
     if len(stream) == 0:
         scriptine.log.error("%sEmpty instruction stream?%s",
                             bdutil.Colors.Red, bdutil.Colors.Reset)
@@ -295,7 +324,7 @@ def scan_command(filename, dump="yes", numbytes=20):
 
 
 if __name__ == "__main__":
-    if (CommandBuilder().prereq_check()):
+    if (CommandChecker().prereq_check()):
         scriptine.run()
     else:
         scriptine.log.error(

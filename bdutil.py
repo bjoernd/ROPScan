@@ -2,6 +2,18 @@
 Some util classes
 """
 
+def abstract():
+    """
+    Abstract class implementation helper.
+
+    Taken from http://norvig.com/python-iaq.html
+    """
+    import inspect
+    caller = inspect.getouterframes(inspect.currentframe())[1][3]
+    raise NotImplementedError(caller + ' must be implemented in subclass')
+
+
+
 class Colors:
     """
     Terminal foreground colors
