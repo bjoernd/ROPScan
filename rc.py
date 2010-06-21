@@ -39,8 +39,8 @@ class CommandChecker():
         for pre in prereqs:
             res = scriptine.shell.backtick("which %s" % pre)
             if res == "":
-                scriptine.log.warn("%s%s%s not found", bdutil.Colors.Yellow,
-                                   pre, bdutil.Colors.Reset)
+                scriptine.log.warn("%s%s%s not found", Colors.Yellow,
+                                   pre, Colors.Reset)
                 return False
 
         return True
@@ -152,110 +152,114 @@ class UDCLICmd(Cmd):
         pass
 
 
-def find_sequences_in_stream(stream, byte_offs=20,
-                             opcode="c3", opcode_str="ret"):
-    """
-    Run through byte stream, find occurences of opcode and check if the
-    corresponding disassembly for the last [1, byte_offs] bytes ends with
-    a ret instruction.
+class OpcodeStream():
+    def __init__(self, bytestream):
+        self.stream = bytestream
 
-    Returns: List of (offset, length) tuples representing the valid sequences.
-    """
+    def find_sequences(self, byte_offs=20,
+                       opcode="c3", opcode_str="ret"):
+        """
+        Run through byte stream, find occurences of opcode and check if the
+        corresponding disassembly for the last [1, byte_offs] bytes ends with
+        a ret instruction.
 
-    tmpfile = "foo.tmp"
-    ret = []
+        Returns: List of (offset, length) tuples representing the valid sequences.
+        """
 
-    # we need at least one more byte than the C3 instruction,
-    # so less than 2 is bad
-    if (byte_offs < 2):
-        scriptine.log.error("Byte offset (%d) too small.", byte_offs)
+        tmpfile = "foo.tmp"
+        ret = []
+
+        # we need at least one more byte than the C3 instruction,
+        # so less than 2 is bad
+        if (byte_offs < 2):
+            scriptine.log.error("Byte offset (%d) too small.", byte_offs)
+            return ret
+
+        scriptine.log.log("Scanning byte stream for %s instruction sequences",
+                          opcode)
+
+        # find first occurence
+        idx = self.stream.index(opcode)
+        while idx > 0:
+            streampos_str = "Position in stream: %02.2f%%" % (100.0 * float(idx+1) / len(self.stream))
+            print streampos_str,
+
+            # if occurence is less than byte_offs bytes into the stream,
+            # adapt the limit
+            if idx > byte_offs:
+                limit = byte_offs
+            else:
+                limit = idx+1
+
+            # validity check sequences by disassembling
+            for i in range(1, limit):
+                # byte string to send to disassembler
+                byte_data = "".join([c+' ' for c in self.stream[idx-i: idx+1]])
+
+                udcli = UDCLICmd()
+                cmd = udcli.cmd_str(byte_data, tmpfile)
+                res = scriptine.shell.sh(cmd)
+                if res != 0:
+                    print cmd, res
+
+                # sequence is valid, if tmpfile contains opcode_str in the last line
+                tmpf = file(tmpfile)
+                lines = [l.strip() for l in tmpf.readlines()]
+
+                # find first occurrence of RET in disassembly
+                try:
+                    finishing_idx = lines.index(opcode_str)
+                except: # might even have NO ret at all
+                    finishing_idx = -1
+
+                # -> this sequence is a valid new sequence, iff RET only occurs as
+                #    the final instruction
+                if finishing_idx == len(lines)-1:
+                    ret += [(idx, i)]
+
+            try:
+                idx = self.stream.index(opcode, idx+1)
+            except:
+                idx = -1
+
+            # N chars left, 1 up
+            print("\033[%dD\033[A" % len(streampos_str))
+
+        os.remove(tmpfile)
+        print ""
+
         return ret
 
-    scriptine.log.log("Scanning byte stream for %s instruction sequences",
-                      opcode)
 
-    # find first occurence
-    idx = stream.index(opcode)
-    while idx > 0:
-        streampos_str = "Position in stream: %02.2f%%" % (100.0 * float(idx+1) / len(stream))
-        print streampos_str,
+    def unique_sequences(self, locations):
+        """
+        Given a byte stream and a set of locations, determine how
+        many unique sequences are within the stream.
+        """
+        uniq_seqs = set()
+        for (off, length) in locations:
+            seq = "".join(self.stream[off-length:off+1])
+            hsh = hashlib.md5(seq)
+            uniq_seqs.add(hsh.hexdigest())
 
-        # if occurence is less than byte_offs bytes into the stream,
-        # adapt the limit
-        if idx > byte_offs:
-            limit = byte_offs
-        else:
-            limit = idx+1
-
-        # validity check sequences by disassembling
-        for i in range(1, limit):
-            # byte string to send to disassembler
-            byte_data = "".join([c+' ' for c in stream[idx-i: idx+1]])
-
-            udcli = UDCLICmd()
-            cmd = udcli.cmd_str(byte_data, tmpfile)
-            res = scriptine.shell.sh(cmd)
-            if res != 0:
-                print cmd, res
-
-            # sequence is valid, if tmpfile contains opcode_str in the last line
-            tmpf = file(tmpfile)
-            lines = [l.strip() for l in tmpf.readlines()]
-
-            # find first occurrence of RET in disassembly
-            try:
-                finishing_idx = lines.index(opcode_str)
-            except: # might even have NO ret at all
-                finishing_idx = -1
-
-            # -> this sequence is a valid new sequence, iff RET only occurs as
-            #    the final instruction
-            if finishing_idx == len(lines)-1:
-                ret += [(idx, i)]
-
-        try:
-            idx = stream.index(opcode, idx+1)
-        except:
-            idx = -1
-
-        # N chars left, 1 up
-        print("\033[%dD\033[A" % len(streampos_str))
-
-    os.remove(tmpfile)
-    print ""
-
-    return ret
+        return uniq_seqs
 
 
-def unique_sequences(bytestream, locations):
-    """
-    Given a byte stream and a set of locations, determine how
-    many unique sequences are within the stream.
-    """
-    uniq_seqs = set()
-    for (off, length) in locations:
-        seq = "".join(bytestream[off-length:off+1])
-        hsh = hashlib.md5(seq)
-        uniq_seqs.add(hsh.hexdigest())
+    def dump_byte_stream(self, offset, length):
+        """
+        Dump byte stream at given (offset, length) pairs.
 
-    return uniq_seqs
+        Note: length in (offset, length) means _before_ offset
+        """
+        print " ".join(self.stream[offset:offset+length+1]),
 
 
-def dump_byte_stream(bytestream, offset, length):
-    """
-    Dump byte stream at given (offset, length) pairs.
-
-    Note: length in (offset, length) means _before_ offset
-    """
-    print " ".join(bytestream[offset:offset+length+1]),
-
-
-def dump_locations_with_offset(bytestream, locations, start_offset):
-    for (c3_offset, length) in locations:
-        begin = start_offset + c3_offset - length
-        print "0x%08x + %3d:  %s" % (begin, length, bdutil.Colors.Cyan),
-        dump_byte_stream(bytestream, c3_offset-length, length)
-        print "%s" % (bdutil.Colors.Reset)
+    def dump_locations_with_offset(self, locations, start_offset):
+        for (c3_offset, length) in locations:
+            begin = start_offset + c3_offset - length
+            print "0x%08x + %3d:  %s" % (begin, length, Colors.Cyan),
+            self.dump_byte_stream(c3_offset-length, length)
+            print "%s" % (Colors.Reset)
 
 
 def scan_command(filename, dump="yes", numbytes=20):
@@ -275,14 +279,14 @@ def scan_command(filename, dump="yes", numbytes=20):
     cmd = readelf.cmd_str(filename, section_name, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
-        scriptine.log.error("%sreadelf error%s", bdutil.Colors.Red,
-                            bdutil.Colors.Reset)
+        scriptine.log.error("%sreadelf error%s", Colors.Red,
+                            Colors.Reset)
         return
 
     (start, size) = readelf.parse_result(tmpfile, section_name)
     if (start == -1 and size == -1):
         scriptine.log.error("%sCannot determine start/size of .text section%s",
-                            bdutil.Colors.Red, bdutil.Colors.Reset)
+                            Colors.Red, Colors.Reset)
         return
 
     # use (start, size) to objdump text segment and extract opcode stream
@@ -290,28 +294,29 @@ def scan_command(filename, dump="yes", numbytes=20):
     cmd = objdump.cmd_str(start, size, filename, tmpfile)
     res = scriptine.shell.sh(cmd)
     if res != 0:
-        scriptine.log.error("%sError in objdump%s", bdutil.Colors.Red,
-                            bdutil.Colors.Reset)
+        scriptine.log.error("%sError in objdump%s", Colors.Red,
+                            Colors.Reset)
 
     stream = objdump.parse_result(tmpfile)
     if len(stream) == 0:
         scriptine.log.error("%sEmpty instruction stream?%s",
-                            bdutil.Colors.Red, bdutil.Colors.Reset)
+                            Colors.Red, Colors.Reset)
 
     scriptine.log.info("Stream bytes: %d, real size %d", len(stream), size)
+    # we must have extracted all bytes
     if len(stream) != size:
         print stream
         sys.exit(1)
 
     os.remove(tmpfile)
 
+    ostream = OpcodeStream(stream)
     # analyze stream
-    locations = find_sequences_in_stream(stream, opcode="c3",
-                                         opcode_str="ret", byte_offs=numbytes)
+    locations = ostream.find_sequences(opcode="c3", opcode_str="ret", byte_offs=numbytes)
     scriptine.log.log("Found: %d sequences.", len(locations))
 
     # check for uniqueness of sequences
-    uniq_seqs = unique_sequences(stream, locations)
+    uniq_seqs = ostream.unique_sequences(locations)
     scriptine.log.log("       %d unique sequences", len(uniq_seqs))
 
     # get unique locations by creating a set of offsets
@@ -319,7 +324,7 @@ def scan_command(filename, dump="yes", numbytes=20):
     scriptine.log.log("       %d unique C3 locations", len(c3_locs))
 
     if dump == "yes":
-        dump_locations_with_offset(stream, locations, start)
+        ostream.dump_locations_with_offset(locations, start)
 
 
 
