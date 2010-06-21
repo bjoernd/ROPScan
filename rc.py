@@ -113,7 +113,7 @@ def scan_section(section, filename, dump, numbytes):
     if dump == "yes":
         ostream.dump_locations_with_offset(locations, section.start)
 
-    return (len(locations), len(uniq_seqs), len(c3_locs))
+    return (locations, len(uniq_seqs), len(c3_locs))
 
 
 def scan_command(filename, dump="yes", numbytes=20):
@@ -148,9 +148,17 @@ def scan_command(filename, dump="yes", numbytes=20):
 
     for sec in the_list:
         (seq, uniq_seq, uniq_loc) = scan_section(sec, filename, dump, numbytes)
-        global_sequences = global_sequences + seq
+        global_sequences = global_sequences + len(seq)
         global_uniq_seqs = global_uniq_seqs + uniq_seq
         global_uniq_locs = global_uniq_locs + uniq_loc
+
+        if dump:
+        l = set()
+        print "Unique C3 locations:",
+        for (loc, ln) in seq:
+            if not loc in l:
+                l.add(loc)
+                print hex(loc + sec.start),
 
     scriptine.log.log("%s============= FINISHED =============%s",
                       Colors.Cyan, Colors.Reset)
