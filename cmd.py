@@ -147,7 +147,6 @@ class ObjdumpCmd(Cmd):
                         if byte != "" and byte is not None:
                             stream += [byte]
                 else: 
-                    print "No match: ", data
                     pass
 
         return stream
