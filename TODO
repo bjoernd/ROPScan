@@ -1,3 +1,1 @@
-* get executable sequences using readelf, don't rely on them
-  having .text as name
 * drop invalid sequences (e.g., ... leave; ret;)
