@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# vim: set et ts=4
 """
 This script uses objdump to extract code section(s) from a
 binary and then disassembles sequences ending with C3 to
@@ -89,8 +90,8 @@ def find_sequences_in_stream(stream, byte_offs=20,
     # find first occurence
     idx = stream.index(opcode)
     while idx > 0:
-        scriptine.log.log("Position in stream: %.2f%%",
-                          100.0 * float(float(idx+1) / len(stream)))
+        streampos_str = "Position in stream: %02.2f%%" % (100.0 * float(idx+1) / len(stream))
+        print streampos_str,
 
         # if occurence is less than byte_offs bytes into the stream,
         # adapt the limit
@@ -128,6 +129,9 @@ def find_sequences_in_stream(stream, byte_offs=20,
             idx = stream.index(opcode, idx+1)
         except:
             idx = -1
+
+        # N chars left, 1 up
+        print("\033[%dD\033[A" % len(streampos_str))
 
     os.remove(tmpfile)
 
