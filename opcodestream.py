@@ -24,6 +24,9 @@ OpcodeStream class used by ROPCheck
      http://sam.zoy.org/wtfpl/COPYING for more details. 
 """
 
+# (c) 2010 Bjoern Doebel <doebel@tudos.org>
+#     economic rights: Technische Universitaet Dresden (Germany)
+
 import scriptine
 import os
 import hashlib
