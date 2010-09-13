@@ -28,6 +28,10 @@ used for a return-oriented-programming-based attack.
      To Public License, Version 2, as published by Sam Hocevar. See
      http://sam.zoy.org/wtfpl/COPYING for more details. 
 """
+
+# (c) 2010 Bjoern Doebel <doebel@tudos.org>
+#     economic rights: Technische Universitaet Dresden (Germany)
+
 import sys
 import os
 
