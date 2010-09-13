@@ -153,12 +153,12 @@ def scan_command(filename, dump="yes", numbytes=20):
         global_uniq_locs = global_uniq_locs + uniq_loc
 
         if dump:
-        l = set()
-        print "Unique C3 locations:",
-        for (loc, ln) in seq:
-            if not loc in l:
-                l.add(loc)
-                print hex(loc + sec.start),
+            l = set()
+            print "Unique C3 locations:",
+            for (loc, ln) in seq:
+                if not loc in l:
+                    l.add(loc)
+                    print hex(loc + sec.start),
 
     scriptine.log.log("%s============= FINISHED =============%s",
                       Colors.Cyan, Colors.Reset)
